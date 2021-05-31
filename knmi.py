@@ -1,5 +1,13 @@
+"""Download the hourly historic weather from the dutch weather agency KNMI and
+   localize the data to a particular lon/lat
+   
+   Note: only works in the Netherlands
+   
+   All copyright of the data belongs to the KNMI. 
+   Please see https://www.knmi.nl/nederland-nu/klimatologie/uurgegevens for more details"""
+
 import pandas as pd
-from math import sin, cos, sqrt, atan2, radians, floor
+import math
 import datetime as dt
 import requests
 import numpy as np
@@ -17,7 +25,7 @@ __headerline = ['STN', 'YYYYMMDD', 'HH', 'DD', 'FH', 'FF', 'FX', 'T', 'T10N', 'T
 
 __baseurl = 'https://cdn.knmi.nl/knmi/map/page/klimatologie/gegevens/uurgegevens/uurgeg_{0}_{1}-{2}.zip'
 
-readable_titles = {
+titles = {
     'T':'Temperatuur',
     'FH': 'Uurgemiddelde windsnelheid',
     'DD': 'Windrichting',
@@ -30,20 +38,16 @@ readable_titles = {
 
 
 def _calculate_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    # Approximate radius of earth in km
-    radius = 6373.0
+    # Based on https://stackoverflow.com/a/4913653/2235667
 
-    lat1 = radians(lat1)
-    lon1 = radians(lon1)
-    lat2 = radians(lat2)
-    lon2 = radians(lon2)
-
-    difference_lon = lon2 - lon1
-    difference_lat = lat2 - lat1
+    radius = 6372.8 #km
+    lon1, lat1, lon2, lat2 = map(math.radians, [lon1, lat1, lon2, lat2])
 
     # Haversine formula
-    arcsin = sin(difference_lat / 2)**2 + cos(lat1) * cos(lat2) * sin(difference_lon / 2)**2
-    haversine = 2 * atan2(sqrt(arcsin), sqrt(1 - arcsin))
+    difference_lon = lon2 - lon1
+    difference_lat = lat2 - lat1
+    arcsin = math.sin(difference_lat / 2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(difference_lon / 2)**2
+    haversine = 2 * math.atan2(math.sqrt(arcsin), math.sqrt(1 - arcsin))
 
     return radius * haversine
 
@@ -159,8 +163,23 @@ def _calculate_locate_weather(df:pd.DataFrame, df_closest_stations:pd.DataFrame,
 
     return df_result
 
-def get_local_weather(starttime:dt.datetime, endtime:dt.datetime, lat:float, lon:float, N_stations:int=3, metrics:list = ['T', 'FH', 'DD', 'Q', 'DR', 'RH', 'N', 'U']) -> pd.DataFrame:
-    
+def get_local_weather(starttime:dt.datetime, endtime:dt.datetime, lat:float, lon:float, 
+                      N_stations:int=3, metrics:list = ['T', 'FH', 'DD', 'Q', 'DR', 'RH', 'N', 'U']) -> pd.DataFrame:
+    """Get the localized hourly weather from the dutch KNMI website for a particular timeframe.
+       
+       Currently supports times starting as of 2010
+
+       Timestamp represents the start of a particular hour. E.g. 14:00 represents 14:00-15:00
+
+       Parameters
+       ----------
+       starttime : datetime object which represents the starting time
+       endtime : datetime object which represents the ending time
+       lat : target latitude
+       lon : target longitude
+       N_stations : number of stations to extrapolate the weather from, defaults to 3
+       metrics : list of metrics to extrapolate"""
+
     # Get the nearest stations in the dataset
     df_closest_stations = _get_closest_stations(lon, lat, N=N_stations)
     
