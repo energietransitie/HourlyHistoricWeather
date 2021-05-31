@@ -6,6 +6,6 @@
    All copyright of the data belongs to the KNMI. 
    Please see https://www.knmi.nl/nederland-nu/klimatologie/uurgegevens for more details"""
 
-from .__main import get_local_weather, column_descriptions
+from .main import get_local_weather, column_descriptions
 
 __all__ = ['get_local_weather', 'column_descriptions']

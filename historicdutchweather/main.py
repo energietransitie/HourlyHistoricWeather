@@ -4,6 +4,8 @@ from datetime import datetime
 import numpy as np
 import scipy.optimize
 import tqdm
+from io import StringIO
+from .measuringstations import measuringstations
 
 import warnings
 from scipy.optimize import OptimizeWarning
@@ -45,7 +47,7 @@ def _calculate_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> f
 
 def _get_stationinfo() -> None:
     """Get the station positional data"""
-    return pd.read_csv('measuringstations.csv')
+    return pd.read_csv(StringIO(measuringstations))
 
 def _get_closest_stations(lon:float, lat:float, N:int=3) -> pd.DataFrame:
     """Calculate the closest N stations to a given coordinate set"""
