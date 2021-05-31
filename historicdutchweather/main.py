@@ -158,7 +158,7 @@ def _calculate_locate_weather(df:pd.DataFrame, df_closest_stations:pd.DataFrame,
     return df_result
 
 def get_local_weather(starttime:datetime, endtime:datetime, lat:float, lon:float, 
-                      N_stations:int=3, metrics:list = ['T', 'FH', 'DD', 'Q', 'DR', 'RH', 'N', 'U']) -> pd.DataFrame:
+                      N_stations:int=3, metrics:list = ['T', 'FH', 'DD', 'Q', 'DR', 'RH', 'U', 'N']) -> pd.DataFrame:
     """Get the localized hourly weather from the dutch KNMI website for a particular timeframe.
        
        Currently supports times starting as of 2010
@@ -184,8 +184,10 @@ def get_local_weather(starttime:datetime, endtime:datetime, lat:float, lon:float
     df_combined = df_combined.loc[(df_combined['YYYYMMDD'] >= int(starttime.strftime('%Y%m%d'))) & \
                                     (df_combined['YYYYMMDD'] < int(endtime.strftime('%Y%m%d')))]
     
+    # Required to ensure all columns exist (when no data is available, these would drop)
+    df_template = pd.DataFrame(columns=metrics) 
+
     # Localize the data
-    df_local_weather = _calculate_locate_weather(df_combined, df_closest_stations, lon, lat, metrics=metrics)
+    df_local_weather = _calculate_locate_weather(df_combined, df_closest_stations, lon, lat, metrics=metrics).set_index('datetime')
     
-    
-    return df_local_weather.set_index('datetime')
+    return pd.concat([df_template, df_local_weather])[metrics]
