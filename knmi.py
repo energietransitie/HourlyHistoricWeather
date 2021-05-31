@@ -1,146 +1,178 @@
-# imports
-import io
-import datetime as dt
-from functools import lru_cache
-from math import sin, cos, sqrt, atan2, radians
-import requests
 import pandas as pd
+from math import sin, cos, sqrt, atan2, radians, floor
+import datetime as dt
+import requests
+import numpy as np
+import scipy.optimize
+import pylab
+import tqdm
 
-class Knmi :
-    '''
-    Class that gets the data from the knmi and .
-    '''
-    def __init__(self, start_date: dt, end_date: dt):
-        self._stations = None
-        self._data = None
-        self.start_date = start_date
-        self.end_date = end_date
-        self._url = r'http://projects.knmi.nl/klimatologie/uurgegevens/getdata_uur.cgi'
-        self._set_knmi_data(start_date, end_date)
-        self.path_to_stations = './data/weather_data_knmi/stations.txt'
-        self._set_stationinfo()
-        self._remove_nan_values()
+import warnings
+from scipy.optimize import OptimizeWarning
+warnings.simplefilter("ignore", OptimizeWarning)
+
+__headerline = ['STN', 'YYYYMMDD', 'HH', 'DD', 'FH', 'FF', 'FX', 'T', 'T10N', 'TD',
+       'SQ', 'Q', 'DR', 'RH', 'P', 'VV', 'N', 'U', 'WW', 'IX', 'M', 'R', 'S',
+       'O', 'Y']
+
+__baseurl = 'https://cdn.knmi.nl/knmi/map/page/klimatologie/gegevens/uurgegevens/uurgeg_{0}_{1}-{2}.zip'
+
+readable_titles = {
+    'T':'Temperatuur',
+    'FH': 'Uurgemiddelde windsnelheid',
+    'DD': 'Windrichting',
+    'Q': 'Globale straling',
+    'DR': "Duur van de neerslag",
+    "RH": "Uursom van de neerslag",
+    "N": "Bewolking",
+    "U": "Relatieve vochtigheid (in procenten)"
+}
 
 
-    @lru_cache(maxsize=32)
-    def _get_raw_knmi_data(self, begin_date: dt.datetime, end_date: dt.datetime) -> str:
-        """Function to download the raw KNMI data out of the API"""
+def _calculate_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    # Approximate radius of earth in km
+    radius = 6373.0
 
-        # Create the post package
-        data = {
-            'byear': begin_date.year,
-            'bmonth': begin_date.month,
-            'bday': begin_date.day,
-            'eyear': end_date.year,
-            'emonth': end_date.month,
-            'eday': end_date.day,
-            'WIND': 'FF',
-            'TEMP': 'T',
-            'SUNR': 'Q'
-        }
+    lat1 = radians(lat1)
+    lon1 = radians(lon1)
+    lat2 = radians(lat2)
+    lon2 = radians(lon2)
 
-        # Do the actual post
-        res = requests.post(self._url, data=data)
+    difference_lon = lon2 - lon1
+    difference_lat = lat2 - lat1
 
-        # Raise for errors
-        res.raise_for_status()
+    # Haversine formula
+    arcsin = sin(difference_lat / 2)**2 + cos(lat1) * cos(lat2) * sin(difference_lon / 2)**2
+    haversine = 2 * atan2(sqrt(arcsin), sqrt(1 - arcsin))
 
-        # Get rid of whitespaces, confuses Pandas
-        text = res.text.replace(' ', '')
+    return radius * haversine
 
-        return text
+def _get_stationinfo() -> None:
+    """Get the station positional data"""
+    return pd.read_csv('measuringstations.csv')
 
-    def _set_knmi_data(self, begin_date: dt.datetime, end_date: dt.datetime) -> pd.DataFrame:
-        """
-        Function that downloads the KNMI data and converts it to a Pandas dataframe
-        """
-        starttime = begin_date.hour
-        endtime = end_date.hour
-        if starttime == 0:
-            begin_date = begin_date - dt.timedelta(hours=1)
-            starttime = 24
-        if endtime == 0:
-            end_date = end_date - dt.timedelta(hours=1)
-            endtime = 24
+def _get_closest_stations(lon:float, lat:float, N:int=3) -> pd.DataFrame:
+    """Calculate the closest N stations to a given coordinate set"""
 
-        text = self._get_raw_knmi_data(begin_date, end_date)
+    df = _get_stationinfo()
+    df['distance'] = df.apply(lambda row: _calculate_distance(lat, lon, row['LAT'], row['LON']), axis=1)
+    df.sort_values('distance', inplace=True)
 
-        headers = "STN,YYYYMMDD,   HH,   DD,   FH,   FF,   FX,    T, T10N,   TD,   SQ,    Q,   DR,   RH,    P,   VV,    N,    U,   WW,   IX,    M,    R,    S,    O,    Y"
-        headerline = [i.strip() for i in headers.split(',')]
+    return df.head(N)
 
-        dataframe = pd.read_csv(io.StringIO(text), comment="#", names=headerline)
+def _get_station_year_weather(stn:int, lower_year:int, upper_year:int, metrics:list) -> pd.DataFrame:
+    """Download the data for a particular timeframe"""
+    
+    url = __baseurl.format(stn, lower_year, upper_year)
+    
+    df = pd.read_csv(url, comment="#", skiprows=30, skip_blank_lines=True, names=__headerline)
+    
+    for metric in metrics:
+        df[metric] = pd.to_numeric(df[metric], errors='coerce')
+    
+    
+    df['T'] = df['T'] / 10 # Temperature in decimal
+    df['FH'] = df['FH'] / 10 # .. in decimal
+    df['DR'] = df['DR'] / 10 # Duur van neerslag
+    
+    # Filter not relevant wind directions
+    df.loc[df['DD'] < 0.01, 'DD'] = np.nan
+    df.loc[df['DD'] > 360, 'DD'] = np.nan
+    
+    df.loc[df['RH'] < 0, 'RH'] = 0
+   
+    return df
 
-        # Only select what is needed
-        start_date_int = int(f'{begin_date.year}{begin_date.month:02d}{begin_date.day:02d}')
-        end_date_int = int(f'{end_date.year}{end_date.month:02d}{end_date.day:02d}')
-        dataframe = dataframe.loc[((dataframe['YYYYMMDD'] > start_date_int) & (dataframe['YYYYMMDD'] < end_date_int)) | ((dataframe['YYYYMMDD'] == start_date_int)
-                                                                                         & (dataframe['HH'] >= starttime)) | ((dataframe['YYYYMMDD'] == end_date_int) & (dataframe['HH'] <= endtime))]
+def _get_station_weather(stn:int, metrics:list) -> pd.DataFrame:
+    """Download multiple timeperiods for one station"""
+    
+    df_2010s = _get_station_year_weather(stn, 2011, 2020, metrics)
+    df_2020s = _get_station_year_weather(stn, 2021, 2030, metrics)
+    
+    return pd.concat([df_2010s, df_2020s])
 
-        # Convert to usable values
-        dataframe['T'] = dataframe['T'] / 10
-        dataframe['FF'] = dataframe['FF'] / 10
-        dataframe['Q'] = round(dataframe['Q'] * (25 / 9), 5)
-        self._data = dataframe
+def _get_all_station_weather(df_stations:pd.DataFrame, metrics) -> pd.DataFrame:
+    """Download multiple timeperiods for multiple stations"""
+    
+    df = pd.DataFrame()
+    
+    for stn in df_stations['STN'].unique():
+        
+        df_station = _get_station_weather(stn, metrics)
+        df = pd.concat([df, df_station])
+        
+    return df
 
-    def _set_stationinfo(self) -> pd.DataFrame:
-        headerline = [i.strip() for i in "STN, LON(east), LAT(north), ALT(m), NAME".split(',')]
-        try :
-            with open(self.path_to_stations, 'r') as file:
-                txt = file.read()
-        except BaseException:
-            self.path_to_stations = '../data/weather_data_knmi/stations.txt'
-            with open(self.path_to_stations, 'r') as file:
-                txt = file.read()
+def _fit_metric(df_for_fit:pd.DataFrame, lon:float, lat:float, metric:str) -> float:
+    """Localize a metric for a single timestamp. 
+    Requires a set of station in df_for_fit and a target location (lon, lat)"""
+    
+    # Model for a linear plane
+    def f(X, a, b, c):
+        return a*X[:,0] + b*X[:, 1] + c
 
-        txt = txt.replace(' ', '')
-        dataframe = pd.read_csv(io.StringIO(txt), comment="#", names=headerline).set_index('STN')
-        self._stations = dataframe
+    # Select the X & Y for the temperature
+    x = df_for_fit[['LON', 'LAT']].values
+    y = df_for_fit[metric].values
 
-    def _calculate_distance(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-        # Approximate radius of earth in km
-        radius = 6373.0
+    # Do the actual fit
+    popt, _ = scipy.optimize.curve_fit(f, x, y)
 
-        lat1 = radians(lat1)
-        lon1 = radians(lon1)
-        lat2 = radians(lat2)
-        lon2 = radians(lon2)
+    # Temperature in Zwolle
+    return f(np.array([[lon, lat]]), popt[0], popt[1], popt[2])
 
-        difference_lon = lon2 - lon1
-        difference_lat = lat2 - lat1
+def _calculate_locate_weather(df:pd.DataFrame, df_closest_stations:pd.DataFrame, metrics:list) -> pd.DataFrame:
+    
+    # Establish what each unique combination is
+    datetime_combinations = df[['YYYYMMDD', 'HH']].drop_duplicates()
+    datetime_combinations.index = range(datetime_combinations.shape[0])
 
-        # Haversine formula
-        arcsin = sin(difference_lat / 2)**2 + cos(lat1) * cos(lat2) * sin(difference_lon / 2)**2
-        haversine = 2 * atan2(sqrt(arcsin), sqrt(1 - arcsin))
+    # Run over each timestamp seperately
+    df_result = pd.DataFrame()
+    for datetime_index in tqdm.tqdm(datetime_combinations.index):
 
-        return radius * haversine
+        # Grab the timestamp
+        datetime_item = datetime_combinations.loc[datetime_index]
 
-    def _remove_nan_values(self):
-         # Remove stations when they have a NaN value
-        for stn, row in self._stations.iterrows():
-            temp = self._data.loc[self._data['STN'] == stn][['T', 'FF', 'Q']]
-            if temp.isnull().values.any():
-                self._stations.drop(stn, inplace=True)
-                data = self._data.loc[self._data['STN'] == stn].index
-                self._data.drop(data, inplace=True)
+        # Grab the relevant data and combine that with the lat/lon of the stations
+        m = (df['YYYYMMDD'] == datetime_item['YYYYMMDD']) & (df['HH'] == datetime_item['HH'])
+        df_subset = pd.merge(df.loc[m], df_closest_stations, on='STN')
 
-    def get_closest_stations(self, lon: float, lat: float, N: int = 3) -> pd.DataFrame:
-        """
-        Function that gets N nearest stations given a longitude (lon) and latitude (lat)
-        """
-        dataframe = self._stations
+        # Create a results row
+        df_result_row = pd.DataFrame({'YYYYMMDD':[datetime_item['YYYYMMDD']], 
+                                      'HH':[datetime_item['HH']],
+                                      'datetime': dt.datetime(int(str(datetime_item['YYYYMMDD'])[:4]), 
+                                                              int(str(datetime_item['YYYYMMDD'])[4:6]), 
+                                                              int(str(datetime_item['YYYYMMDD'])[6:8]),
+                                                              datetime_item['HH']-1,
+                                                              0,
+                                                              0
+                                      )}
+                                    )
+        
+        # Do a 2D linear regression for each metric we are interested in
+        for metric in metrics:        
+            if df_subset[metric].dropna().shape[0] == 3:
+                df_result_row[metric] = _fit_metric(df_subset, lon, lat, metric)
+             
+        df_result = pd.concat([df_result, df_result_row])
 
-        # Convert LAT(north) and LON(east) to float.
-        dataframe['LAT(north)'] = pd.to_numeric(dataframe['LAT(north)'], downcast='float')
-        dataframe['LON(east)'] = pd.to_numeric(dataframe['LON(east)'], downcast='float')
+    return df_result
 
-        # Calculate distance to stations from given coordinates.
-        dataframe['distance'] = dataframe.apply(lambda row: self._calculate_distance(lat, lon, row['LAT(north)'], row['LON(east)']), axis=1)
-        dataframe.sort_values('distance', inplace=True)
-
-        return dataframe.head(N)
-
-    def get_data(self):
-        '''
-        Function that gets the data from KNMI which is loaded in the constructor.
-        '''
-        return self._data
+def get_local_weather(starttime:dt.datetime, endtime:dt.datetime, lat:float, lon:float, N_stations:int=3, metrics:list = ['T', 'FH', 'DD', 'Q', 'DR', 'RH', 'N', 'U']) -> pd.DataFrame:
+    
+    # Get the nearest stations in the dataset
+    df_closest_stations = _get_closest_stations(lon, lat, N=N_stations)
+    
+    # Download the historic data for those stations
+    df_combined = _get_all_station_weather(df_closest_stations, metrics)
+    
+    # Filter the dataset based on the supplied ranges
+    df_combined = df_combined.loc[(df_combined['YYYYMMDD'] >= int(starttime.strftime('%Y%m%d'))) & \
+                                    (df_combined['YYYYMMDD'] < int(endtime.strftime('%Y%m%d')))]
+    
+    # Localize the data
+    df_local_weather = _calculate_locate_weather(df_combined, df_closest_stations, metrics=metrics)
+    
+    
+    return df_local_weather.set_index('datetime')
