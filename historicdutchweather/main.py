@@ -6,6 +6,7 @@ import scipy.optimize
 import tqdm
 from io import StringIO
 from .measuringstations import measuringstations
+import pytz
 
 import warnings
 from scipy.optimize import OptimizeWarning
@@ -119,7 +120,7 @@ def _fit_metric(df_for_fit:pd.DataFrame, lon:float, lat:float, metric:str) -> fl
     # Temperature in Zwolle
     return f(np.array([[lon, lat]]), popt[0], popt[1], popt[2])
 
-def _calculate_locate_weather(df:pd.DataFrame, df_closest_stations:pd.DataFrame, lon:float, lat:float, metrics:list) -> pd.DataFrame:
+def _calculate_locate_weather(df:pd.DataFrame, df_closest_stations:pd.DataFrame, lon:float, lat:float, metrics:list, N:int) -> pd.DataFrame:
     
     # Establish what each unique combination is
     datetime_combinations = df[['YYYYMMDD', 'HH']].drop_duplicates()
@@ -150,11 +151,14 @@ def _calculate_locate_weather(df:pd.DataFrame, df_closest_stations:pd.DataFrame,
         
         # Do a 2D linear regression for each metric we are interested in
         for metric in metrics:        
-            if df_subset[metric].dropna().shape[0] == 3:
-                df_result_row[metric] = _fit_metric(df_subset, lon, lat, metric)
-             
+            if df_subset[metric].dropna().shape[0] > (N-1):
+                df_result_row[metric] = _fit_metric(df_subset.loc[~df_subset[metric].isna()].head(N), lon, lat, metric)
+     
         df_result = pd.concat([df_result, df_result_row])
 
+    # Final fixes
+    df_result.loc[df_result['N'] < 0, 'N'] = 0        
+    df_result.loc[df_result['N'] > 9, 'N'] = 9      
     return df_result
 
 def get_local_weather(starttime:datetime, endtime:datetime, lat:float, lon:float, 
@@ -175,7 +179,7 @@ def get_local_weather(starttime:datetime, endtime:datetime, lat:float, lon:float
        metrics : list of metrics to extrapolate"""
 
     # Get the nearest stations in the dataset
-    df_closest_stations = _get_closest_stations(lon, lat, N=N_stations)
+    df_closest_stations = _get_closest_stations(lon, lat, N=(N_stations*2))
     
     # Download the historic data for those stations
     df_combined = _get_all_station_weather(df_closest_stations, metrics)
@@ -188,6 +192,9 @@ def get_local_weather(starttime:datetime, endtime:datetime, lat:float, lon:float
     df_template = pd.DataFrame(columns=metrics) 
 
     # Localize the data
-    df_local_weather = _calculate_locate_weather(df_combined, df_closest_stations, lon, lat, metrics=metrics).set_index('datetime')
+    df_local_weather = _calculate_locate_weather(df_combined, df_closest_stations, lon, lat, metrics=metrics, N=N_stations).set_index('datetime')
+
+    # Save as UTC
+    df_local_weather.index = [i.tz_localize(pytz.timezone('UTC')) for i in df_local_weather.index]
     
     return pd.concat([df_template, df_local_weather])[metrics]
