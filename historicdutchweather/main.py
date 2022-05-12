@@ -61,14 +61,18 @@ def _get_closest_stations(lon:float, lat:float, N:int=3) -> pd.DataFrame:
 
 def _get_station_year_weather(stn:int, lower_year:int, upper_year:int, metrics:list) -> pd.DataFrame:
     """Download the data for a particular timeframe"""
-    
+
     url = __baseurl.format(stn, lower_year, upper_year)
     
     df = pd.read_csv(url, comment="#", skiprows=30, skip_blank_lines=True, names=__headerline)
     
     for metric in metrics:
         df[metric] = pd.to_numeric(df[metric], errors='coerce')
-    
+
+
+    df['T'] = df['T'].astype(float)
+    df['FH'] = df['FH'].astype(float)
+    df['DR'] = df['DR'].astype(float)
     
     df['T'] = df['T'] / 10 # Temperature in decimal
     df['FH'] = df['FH'] / 10 # .. in decimal
@@ -94,11 +98,18 @@ def _get_all_station_weather(df_stations:pd.DataFrame, metrics) -> pd.DataFrame:
     """Download multiple timeperiods for multiple stations"""
     
     df = pd.DataFrame()
+    print("Model 2")
+
     
     for stn in df_stations['STN'].unique():
-        
-        df_station = _get_station_weather(stn, metrics)
-        df = pd.concat([df, df_station])
+
+        try:
+            df_station = _get_station_weather(stn, metrics)
+            df = pd.concat([df, df_station])
+        except (ValueError, TypeError):
+            print("Got a value error for station {0}".format(stn))
+            print("Will skip for now")
+            pass
         
     return df
 
@@ -157,8 +168,9 @@ def _calculate_locate_weather(df:pd.DataFrame, df_closest_stations:pd.DataFrame,
         df_result = pd.concat([df_result, df_result_row])
 
     # Final fixes
-    df_result.loc[df_result['N'] < 0, 'N'] = 0        
-    df_result.loc[df_result['N'] > 9, 'N'] = 9      
+    if 'N' in df_result.columns:
+        df_result.loc[df_result['N'] < 0, 'N'] = 0        
+        df_result.loc[df_result['N'] > 9, 'N'] = 9      
     return df_result
 
 def get_local_weather(starttime:datetime, endtime:datetime, lat:float, lon:float, 
