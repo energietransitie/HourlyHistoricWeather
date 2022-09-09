@@ -64,19 +64,21 @@ def _get_station_year_weather(stn:int, lower_year:int, upper_year:int, metrics:l
 
     url = __baseurl.format(stn, lower_year, upper_year)
     
-    df = pd.read_csv(url, comment="#", skiprows=30, skip_blank_lines=True, names=__headerline)
+    df = pd.read_csv(url, comment="#", skiprows=30, skip_blank_lines=True, names=__headerline, low_memory=False)
     
     for metric in metrics:
         df[metric] = pd.to_numeric(df[metric], errors='coerce')
 
 
-    df['T'] = df['T'].astype(float)
-    df['FH'] = df['FH'].astype(float)
-    df['DR'] = df['DR'].astype(float)
-    
+    df['T'] = pd.to_numeric(df['T'], errors='coerce')
+    df['FH'] = pd.to_numeric(df['FH'], errors='coerce')
+    df['DR'] = pd.to_numeric(df['DR'], errors='coerce')
+    df['DD'] = pd.to_numeric(df['DD'], errors='coerce')
+    df['RH'] = pd.to_numeric(df['RH'], errors='coerce')
+
     df['T'] = df['T'] / 10 # Temperature in decimal
-    df['FH'] = df['FH'] / 10 # .. in decimal
-    df['DR'] = df['DR'] / 10 # Duur van neerslag
+    df['FH'] = df['FH'] / 10 # Wind speed in decimal
+    df['DR'] = df['DR'] / 10 # Duration of rain
     
     # Filter not relevant wind directions
     df.loc[df['DD'] < 0.01, 'DD'] = np.nan
@@ -98,18 +100,13 @@ def _get_all_station_weather(df_stations:pd.DataFrame, metrics) -> pd.DataFrame:
     """Download multiple timeperiods for multiple stations"""
     
     df = pd.DataFrame()
-    print("Model 2")
+    # print("Model 2")
 
     
     for stn in df_stations['STN'].unique():
 
-        try:
-            df_station = _get_station_weather(stn, metrics)
-            df = pd.concat([df, df_station])
-        except (ValueError, TypeError):
-            print("Got a value error for station {0}".format(stn))
-            print("Will skip for now")
-            pass
+        df_station = _get_station_weather(stn, metrics)
+        df = pd.concat([df, df_station])
         
     return df
 
@@ -184,7 +181,7 @@ def get_local_weather(starttime:datetime, endtime:datetime, lat:float, lon:float
        Parameters
        ----------
        starttime : datetime object which represents the starting time
-       endtime : datetime object which represents the ending time
+       endtime : datetime object which represents the ending time (inclusive)
        lat : target latitude
        lon : target longitude
        N_stations : number of stations to extrapolate the weather from, defaults to 3
@@ -198,15 +195,14 @@ def get_local_weather(starttime:datetime, endtime:datetime, lat:float, lon:float
     
     # Filter the dataset based on the supplied ranges
     df_combined = df_combined.loc[(df_combined['YYYYMMDD'] >= int(starttime.strftime('%Y%m%d'))) & \
-                                    (df_combined['YYYYMMDD'] < int(endtime.strftime('%Y%m%d')))]
+                                    (df_combined['YYYYMMDD'] <= int(endtime.strftime('%Y%m%d')))]
     
     # Required to ensure all columns exist (when no data is available, these would drop)
     df_template = pd.DataFrame(columns=metrics) 
 
     # Localize the data
     df_local_weather = _calculate_locate_weather(df_combined, df_closest_stations, lon, lat, metrics=metrics, N=N_stations).set_index('datetime')
+    df_result = pd.concat([df_template, df_local_weather])[metrics].tz_localize('Europe/Amsterdam')
 
-    # Save as UTC
-    df_local_weather.index = [i.tz_localize(pytz.timezone('UTC')) for i in df_local_weather.index]
-    
-    return pd.concat([df_template, df_local_weather])[metrics]
+    # return as timezone aware dataframe
+    return df_result[starttime:endtime]
