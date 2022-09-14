@@ -182,8 +182,6 @@ def get_local_weather(starttime:datetime, endtime:datetime, lat:float, lon:float
        N_stations : number of stations to extrapolate the weather from, defaults to 3
        metrics : list of metrics to extrapolate"""
 
-    print('hello world')
-
     # Get the nearest stations in the dataset
     df_closest_stations = _get_closest_stations(lon, lat, N=(N_stations*2))
     
