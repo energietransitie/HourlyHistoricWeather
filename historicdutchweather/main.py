@@ -66,25 +66,23 @@ def _get_station_year_weather(stn:int, lower_year:int, upper_year:int, metrics:l
     
     df = pd.read_csv(url, comment="#", skiprows=30, skip_blank_lines=True, names=__headerline, low_memory=False)
     
+    # Process the metrics we care about
     for metric in metrics:
         df[metric] = pd.to_numeric(df[metric], errors='coerce')
 
-
-    df['T'] = pd.to_numeric(df['T'], errors='coerce')
-    df['FH'] = pd.to_numeric(df['FH'], errors='coerce')
-    df['DR'] = pd.to_numeric(df['DR'], errors='coerce')
-    df['DD'] = pd.to_numeric(df['DD'], errors='coerce')
-    df['RH'] = pd.to_numeric(df['RH'], errors='coerce')
-
-    df['T'] = df['T'] / 10 # Temperature in decimal
-    df['FH'] = df['FH'] / 10 # Wind speed in decimal
-    df['DR'] = df['DR'] / 10 # Duration of rain
+    # Metrics provided in decimals
+    for metric in ['T', 'FH', 'DR']:
+        if metric in metrics:
+            df[metric] = df[metric] / 10 # Temperature in decimal
     
-    # Filter not relevant wind directions
-    df.loc[df['DD'] < 0.01, 'DD'] = np.nan
-    df.loc[df['DD'] > 360, 'DD'] = np.nan
+    # Fix non-relevant wind directions
+    if 'DD' in metrics:
+        df.loc[df['DD'] < 0.01, 'DD'] = np.nan
+        df.loc[df['DD'] > 360, 'DD'] = np.nan
     
-    df.loc[df['RH'] < 0, 'RH'] = 0
+    # Fix non-relevant rainfall
+    if 'RH' in metrics:
+        df.loc[df['RH'] < 0, 'RH'] = 0
    
     return df
 
@@ -99,10 +97,7 @@ def _get_station_weather(stn:int, metrics:list) -> pd.DataFrame:
 def _get_all_station_weather(df_stations:pd.DataFrame, metrics) -> pd.DataFrame:
     """Download multiple timeperiods for multiple stations"""
     
-    df = pd.DataFrame()
-    # print("Model 2")
-
-    
+    df = pd.DataFrame()    
     for stn in df_stations['STN'].unique():
 
         df_station = _get_station_weather(stn, metrics)
@@ -125,7 +120,7 @@ def _fit_metric(df_for_fit:pd.DataFrame, lon:float, lat:float, metric:str) -> fl
     # Do the actual fit
     popt, _ = scipy.optimize.curve_fit(f, x, y)
 
-    # Temperature in Zwolle
+    # Return the fitted results
     return f(np.array([[lon, lat]]), popt[0], popt[1], popt[2])
 
 def _calculate_locate_weather(df:pd.DataFrame, df_closest_stations:pd.DataFrame, lon:float, lat:float, metrics:list, N:int) -> pd.DataFrame:
@@ -186,6 +181,8 @@ def get_local_weather(starttime:datetime, endtime:datetime, lat:float, lon:float
        lon : target longitude
        N_stations : number of stations to extrapolate the weather from, defaults to 3
        metrics : list of metrics to extrapolate"""
+
+    print('hello world')
 
     # Get the nearest stations in the dataset
     df_closest_stations = _get_closest_stations(lon, lat, N=(N_stations*2))
