@@ -182,6 +182,11 @@ def get_local_weather(starttime:datetime, endtime:datetime, lat:float, lon:float
        N_stations : number of stations to extrapolate the weather from, defaults to 3
        metrics : list of metrics to extrapolate"""
 
+    if (starttime.tzinfo is None):
+        starttime = pytz.timezone('Europe/Amsterdam').localize(starttime)
+    if (endtime.tzinfo is None):
+        endtime = pytz.timezone('Europe/Amsterdam').localize(endtime)
+                                         
     # Get the nearest stations in the dataset
     df_closest_stations = _get_closest_stations(lon, lat, N=(N_stations*2))
     
@@ -189,15 +194,15 @@ def get_local_weather(starttime:datetime, endtime:datetime, lat:float, lon:float
     df_combined = _get_all_station_weather(df_closest_stations, metrics)
     
     # Filter the dataset based on the supplied ranges
-    df_combined = df_combined.loc[(df_combined['YYYYMMDD'] >= int(starttime.strftime('%Y%m%d'))) & \
-                                    (df_combined['YYYYMMDD'] <= int(endtime.strftime('%Y%m%d')))]
+    df_combined = df_combined.loc[(df_combined['YYYYMMDD'] >= int(starttime.astimezone(pytz.timezone('UTC')).strftime('%Y%m%d'))) & \
+                                    (df_combined['YYYYMMDD'] <= int(endtime.astimezone(pytz.timezone('UTC')).strftime('%Y%m%d')))]
     
     # Required to ensure all columns exist (when no data is available, these would drop)
     df_template = pd.DataFrame(columns=metrics) 
 
     # Localize the data
     df_local_weather = _calculate_locate_weather(df_combined, df_closest_stations, lon, lat, metrics=metrics, N=N_stations).set_index('datetime')
-    df_result = pd.concat([df_template, df_local_weather])[metrics].tz_localize('Europe/Amsterdam')
+    df_result = pd.concat([df_template, df_local_weather])[metrics].tz_localize('UTC').tz_convert('Europe/Amsterdam')
 
     # return as timezone aware dataframe
     return df_result[starttime:endtime]
