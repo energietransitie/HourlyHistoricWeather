@@ -3,9 +3,7 @@ import math
 from datetime import datetime
 import numpy as np
 import scipy.optimize
-import tqdm
-from io import StringIO
-from .measuringstations import measuringstations
+from tqdm.notebook import tqdm
 import pytz
 
 import warnings
@@ -48,7 +46,7 @@ def _calculate_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> f
 
 def _get_stationinfo() -> None:
     """Get the station positional data"""
-    return pd.read_csv(StringIO(measuringstations))
+    return pd.read_csv('measuringstations.csv')
 
 def _get_closest_stations(lon:float, lat:float, N:int=3) -> pd.DataFrame:
     """Calculate the closest N stations to a given coordinate set"""
@@ -131,7 +129,7 @@ def _calculate_locate_weather(df:pd.DataFrame, df_closest_stations:pd.DataFrame,
 
     # Run over each timestamp seperately
     df_result = pd.DataFrame()
-    for datetime_index in tqdm.tqdm(datetime_combinations.index):
+    for datetime_index in tqdm(datetime_combinations.index):
 
         # Grab the timestamp
         datetime_item = datetime_combinations.loc[datetime_index]
